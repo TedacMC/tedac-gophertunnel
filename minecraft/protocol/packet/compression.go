@@ -3,6 +3,7 @@ package packet
 import (
 	"bytes"
 	"fmt"
+	"github.com/golang/snappy"
 	"github.com/klauspost/compress/flate"
 	"github.com/sandertv/gophertunnel/internal"
 	"io"
@@ -19,8 +20,12 @@ type Compression interface {
 	Decompress(compressed []byte) ([]byte, error)
 }
 
-// FlateCompression is the implementation of the Flate compression algorithm.
-type FlateCompression struct{}
+type (
+	// FlateCompression is the implementation of the Flate compression algorithm. This was used by default until v1.19.30.
+	FlateCompression struct{}
+	// SnappyCompression is the implementation of the Snappy compression algorithm. This is used by default.
+	SnappyCompression struct{}
+)
 
 var (
 	// flateDecompressPool is a sync.Pool for io.ReadCloser flate readers. These are pooled for connections.
@@ -85,9 +90,36 @@ func (FlateCompression) Decompress(compressed []byte) ([]byte, error) {
 	return decompressed.Bytes(), nil
 }
 
+// EncodeCompression ...
+func (SnappyCompression) EncodeCompression() uint16 {
+	return 1
+}
+
+// Compress ...
+func (SnappyCompression) Compress(decompressed []byte) ([]byte, error) {
+	// Because Snappy allocates a slice only once, it is less important to have
+	// a dst slice pre-allocated. With FlateCompression this is more important,
+	// because flate does a lot of smaller allocations which causes a
+	// considerable slowdown.
+	return snappy.Encode(nil, decompressed), nil
+}
+
+// Decompress ...
+func (SnappyCompression) Decompress(compressed []byte) ([]byte, error) {
+	// Snappy writes a decoded data length prefix, so it can allocate the
+	// perfect size right away and only needs to allocate once. No need to pool
+	// byte slices here either.
+	decompressed, err := snappy.Decode(nil, compressed)
+	if err != nil {
+		return nil, fmt.Errorf("decompress snappy: %w", err)
+	}
+	return decompressed, nil
+}
+
 // init registers all valid compressions with the protocol.
 func init() {
 	RegisterCompression(FlateCompression{})
+	RegisterCompression(SnappyCompression{})
 }
 
 var compressions = map[uint16]Compression{}

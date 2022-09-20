@@ -55,6 +55,11 @@ func (decoder *Decoder) EnableCompression(compression Compression) {
 	decoder.compression = compression
 }
 
+// EnableCompression enables compression for the Decoder.
+func (decoder *Decoder) EnableCompression(compression Compression) {
+	decoder.compression = compression
+}
+
 // DisableBatchPacketLimit disables the check that limits the number of packets allowed in a single packet
 // batch. This should typically be called for Decoders decoding from a server connection.
 func (decoder *Decoder) DisableBatchPacketLimit() {
