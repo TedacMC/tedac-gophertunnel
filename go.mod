@@ -27,4 +27,4 @@ require (
 	google.golang.org/protobuf v1.25.0 // indirect
 )
 
-replace github.com/sandertv/go-raknet => github.com/tedacmc/tedac-raknet v0.0.3
+replace github.com/sandertv/go-raknet => github.com/tedacmc/tedac-raknet v0.0.4
