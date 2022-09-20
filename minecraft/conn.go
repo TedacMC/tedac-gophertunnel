@@ -151,7 +151,7 @@ func newConn(netConn net.Conn, key *ecdsa.PrivateKey, log *log.Logger) *Conn {
 		log:        log,
 		hdr:        &packet.Header{},
 	}
-	conn.expectedIDs.Store([]uint32{packet.IDRequestNetworkSettings})
+	conn.expectedIDs.Store([]uint32{packet.IDLogin, packet.IDRequestNetworkSettings})
 	_, _ = rand.Read(conn.salt)
 
 	go func() {
