@@ -696,6 +696,25 @@ func (conn *Conn) handleNetworkSettings(pk *packet.NetworkSettings) error {
 // handleLogin handles an incoming login packet. It verifies and decodes the login request found in the packet
 // and returns an error if it couldn't be done successfully.
 func (conn *Conn) handleLogin(pk *packet.Login) error {
+	found := false
+	for _, pro := range conn.acceptedProto {
+		if pro.ID() == pk.ClientProtocol {
+			conn.proto = pro
+			conn.pool = pro.Packets()
+			found = true
+			break
+		}
+	}
+	if !found {
+		status := packet.PlayStatusLoginFailedClient
+		if pk.ClientProtocol > protocol.CurrentProtocol {
+			// The server is outdated in this case, so we have to change the status we send.
+			status = packet.PlayStatusLoginFailedServer
+		}
+		_ = conn.WritePacket(&packet.PlayStatus{Status: status})
+		return fmt.Errorf("%v connected with an incompatible protocol: expected protocol = %v, client protocol = %v", conn.identityData.DisplayName, protocol.CurrentProtocol, pk.ClientProtocol)
+	}
+
 	// The next expected packet is a response from the client to the handshake.
 	conn.expect(packet.IDClientToServerHandshake)
 	var (
