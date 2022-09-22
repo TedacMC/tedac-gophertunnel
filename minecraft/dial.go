@@ -161,10 +161,6 @@ func (d Dialer) DialContext(ctx context.Context, network, address string) (conn 
 	conn.packetFunc = d.PacketFunc
 	conn.cacheEnabled = d.EnableClientCache
 
-	// Enable compression based on the protocol.
-	conn.enc.EnableCompression(n.Compression(netConn))
-	conn.dec.EnableCompression(n.Compression(netConn))
-
 	// Disable the batch packet limit so that the server can send packets as often as it wants to.
 	conn.dec.DisableBatchPacketLimit()
 
