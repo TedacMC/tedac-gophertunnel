@@ -62,6 +62,7 @@ type Conn struct {
 	pool          packet.Pool
 	enc           *packet.Encoder
 	dec           *packet.Decoder
+	compression   packet.Compression
 
 	identityData login.IdentityData
 	clientData   login.ClientData
@@ -119,6 +120,12 @@ type Conn struct {
 	// be able to join the server. If they don't accept, they can only leave the server.
 	texturePacksRequired bool
 	packQueue            *resourcePackQueue
+	// downloadResourcePack is an optional function passed to a Dial() call. If set, each resource pack received
+	// from the server will call this function to see if it should be downloaded or not.
+	downloadResourcePack func(id uuid.UUID, version string) bool
+	// ignoredResourcePacks is a slice of resource packs that are not being downloaded due to the downloadResourcePack
+	// func returning false for the specific pack.
+	ignoredResourcePacks []exemptedResourcePack
 
 	cacheEnabled bool
 
@@ -137,7 +144,7 @@ type Conn struct {
 // Minecraft packets to that net.Conn.
 // newConn accepts a private key which will be used to identify the connection. If a nil key is passed, the
 // key is generated.
-func newConn(netConn net.Conn, key *ecdsa.PrivateKey, log *log.Logger) *Conn {
+func newConn(netConn net.Conn, key *ecdsa.PrivateKey, log *log.Logger, proto Protocol, flushRate time.Duration) *Conn {
 	conn := &Conn{
 		enc:        packet.NewEncoder(netConn),
 		dec:        packet.NewDecoder(netConn),
@@ -150,12 +157,16 @@ func newConn(netConn net.Conn, key *ecdsa.PrivateKey, log *log.Logger) *Conn {
 		privateKey: key,
 		log:        log,
 		hdr:        &packet.Header{},
+		proto:      proto,
 	}
 	conn.expectedIDs.Store([]uint32{packet.IDLogin, packet.IDRequestNetworkSettings})
 	_, _ = rand.Read(conn.salt)
 
+	if flushRate <= 0 {
+		return conn
+	}
 	go func() {
-		ticker := time.NewTicker(time.Second / 20)
+		ticker := time.NewTicker(flushRate)
 		defer ticker.Stop()
 		for range ticker.C {
 			if err := conn.Flush(); err != nil {
@@ -675,13 +686,13 @@ func (conn *Conn) handleRequestNetworkSettings(pk *packet.RequestNetworkSettings
 	conn.expect(packet.IDLogin)
 	if err := conn.WritePacket(&packet.NetworkSettings{
 		CompressionThreshold: 512,
-		CompressionAlgorithm: packet.SnappyCompression{},
+		CompressionAlgorithm: conn.compression,
 	}); err != nil {
 		return fmt.Errorf("error sending network settings: %v", err)
 	}
 	_ = conn.Flush()
-	conn.enc.EnableCompression(packet.SnappyCompression{})
-	conn.dec.EnableCompression(packet.SnappyCompression{})
+	conn.enc.EnableCompression(conn.compression)
+	conn.dec.EnableCompression(conn.compression)
 	return nil
 }
 
@@ -844,6 +855,14 @@ func (conn *Conn) handleResourcePacksInfo(pk *packet.ResourcePacksInfo) error {
 			conn.packQueue.packAmount--
 			continue
 		}
+		if conn.downloadResourcePack != nil && !conn.downloadResourcePack(uuid.MustParse(pack.UUID), pack.Version) {
+			conn.ignoredResourcePacks = append(conn.ignoredResourcePacks, exemptedResourcePack{
+				uuid:    pack.UUID,
+				version: pack.Version,
+			})
+			conn.packQueue.packAmount--
+			continue
+		}
 		// This UUID_Version is a hack Mojang put in place.
 		packsToDownload = append(packsToDownload, pack.UUID+"_"+pack.Version)
 		conn.packQueue.downloadingPacks[pack.UUID] = downloadingPack{
@@ -856,6 +875,14 @@ func (conn *Conn) handleResourcePacksInfo(pk *packet.ResourcePacksInfo) error {
 	for _, pack := range pk.BehaviourPacks {
 		if _, ok := conn.packQueue.downloadingPacks[pack.UUID]; ok {
 			conn.log.Printf("duplicate behaviour pack entry %v in resource pack info\n", pack.UUID)
+			conn.packQueue.packAmount--
+			continue
+		}
+		if conn.downloadResourcePack != nil && !conn.downloadResourcePack(uuid.MustParse(pack.UUID), pack.Version) {
+			conn.ignoredResourcePacks = append(conn.ignoredResourcePacks, exemptedResourcePack{
+				uuid:    pack.UUID,
+				version: pack.Version,
+			})
 			conn.packQueue.packAmount--
 			continue
 		}
@@ -924,6 +951,11 @@ func (conn *Conn) hasPack(uuid string, version string, hasBehaviours bool) bool 
 	conn.packMu.Lock()
 	defer conn.packMu.Unlock()
 
+	for _, ignored := range conn.ignoredResourcePacks {
+		if ignored.uuid == uuid && ignored.version == version {
+			return true
+		}
+	}
 	for _, pack := range conn.resourcePacks {
 		if pack.UUID() == uuid && pack.Version() == version && pack.HasBehaviours() == hasBehaviours {
 			return true
