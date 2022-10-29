@@ -98,7 +98,8 @@ type ClientData struct {
 	DeviceModel string
 	// DeviceOS is a numerical ID indicating the OS of the device.
 	DeviceOS protocol.DeviceOS
-	// DeviceID is a UUID specific to the device. A different user will have the same UUID for this.
+	// DeviceID is usually a UUID specific to the device. A different user will have the same UUID for this.
+	// DeviceID is not guaranteed to always be a UUID. It is a base64 encoded string under some circumstances.
 	DeviceID string `json:"DeviceId"`
 	// GameVersion is the game version of the player that attempted to join, for example '1.11.0'.
 	GameVersion string
@@ -273,9 +274,6 @@ func (data ClientData) Validate() error {
 	if data.DeviceOS <= 0 || data.DeviceOS > 15 {
 		return fmt.Errorf("DeviceOS must carry a value between 1 and 15, but got %v", data.DeviceOS)
 	}
-	if _, err := uuid.Parse(data.DeviceID); err != nil {
-		return fmt.Errorf("DeviceID must be parseable as a valid UUID, but got %v", data.DeviceID)
-	}
 	if !checkVersion(data.GameVersion) {
 		return fmt.Errorf("GameVersion must only contain dots and numbers, but got %v", data.GameVersion)
 	}
@@ -327,10 +325,9 @@ func (data ClientData) Validate() error {
 	if data.SkinID == "" {
 		return fmt.Errorf("SkinID must not be an empty string")
 	}
-	if data.UIProfile != 0 && data.UIProfile != 1 {
-		return fmt.Errorf("UIProfile must be either 0 or 1, but got %v", data.UIProfile)
+	if data.UIProfile < 0 || data.UIProfile > 2 {
+		return fmt.Errorf("UIProfile must be between 0-2, but got %v", data.UIProfile)
 	}
-
 	return nil
 }
 
