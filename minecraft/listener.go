@@ -232,8 +232,12 @@ func (listener *Listener) createConn(n Network, netConn net.Conn) {
 	conn.authEnabled = !listener.cfg.AuthenticationDisabled
 
 	// Enable compression based on the protocol.
-	conn.enc.EnableCompression(n.Compression(netConn))
-	conn.dec.EnableCompression(n.Compression(netConn))
+	// 10 was the last RakNet protocol version, that reading Login packet at the first packet
+	// before RequestNetworkSettings packet getting added on version 11.
+	if netConn.(*raknet.Conn).ProtocolVersion() <= 10 {
+		conn.enc.EnableCompression(n.Compression(netConn))
+		conn.dec.EnableCompression(n.Compression(netConn))
+	}
 
 	if listener.playerCount.Load() == int32(listener.cfg.MaximumPlayers) && listener.cfg.MaximumPlayers != 0 {
 		// The server was full. We kick the player immediately and close the connection.
