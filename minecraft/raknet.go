@@ -18,7 +18,7 @@ func (RakNet) PingContext(ctx context.Context, a string) ([]byte, error) {
 }
 func (RakNet) Listen(address string) (NetworkListener, error) { return raknet.Listen(address) }
 
-func (RakNet) Compression(net.Conn) packet.Compression { return packet.FlateCompression{} }
+func (RakNet) Compression(net.Conn) packet.Compression { return packet.FlateCompression }
 
 // init registers the RakNet network.
 func init() {
