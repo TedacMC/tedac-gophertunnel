@@ -75,7 +75,7 @@ func RequestLiveToken() (*oauth2.Token, error) {
 // be printed to the io.Writer passed with a user code which the user must use to submit.
 // Once fully authenticated, an oauth2 token is returned which may be used to login to XBOX Live.
 func RequestLiveTokenWriter(w io.Writer) (*oauth2.Token, error) {
-	d, err := StartDeviceAuth()
+	d, err := startDeviceAuth()
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ func updateServerTimeFromHeaders(headers http.Header) {
 
 // startDeviceAuth starts the device auth, retrieving a login URI for the user and a code the user needs to
 // enter.
-func StartDeviceAuth() (*DeviceAuthConnect, error) {
+func startDeviceAuth() (*DeviceAuthConnect, error) {
 	resp, err := http.PostForm("https://login.live.com/oauth20_connect.srf", url.Values{
 		"client_id":     {"0000000048183522"},
 		"scope":         {"service::user.auth.xboxlive.com::MBI_SSL"},
