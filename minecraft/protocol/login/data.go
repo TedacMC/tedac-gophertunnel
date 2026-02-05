@@ -2,6 +2,7 @@ package login
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -14,8 +15,11 @@ import (
 	"golang.org/x/text/language"
 )
 
-// IdentityData contains identity data of the player logged in. It is found in one of the JWT claims signed
-// by Mojang, and can thus be trusted.
+// IdentityData contains identity data of the player logged in.
+//
+// For legacy logins, it is found in the Mojang JWT chain (extraData) and can thus be trusted.
+// For newer logins using multiplayer tokens (OIDC), it is derived from the verified ID token issued by the
+// Minecraft authorization service, and may be augmented with legacy chain data when present.
 type IdentityData struct {
 	// XUID is the XBOX Live user ID of the player, which will remain consistent as long as the player is
 	// logged in with the XBOX Live account. It is empty if the user is not logged into its XBL account.
@@ -26,13 +30,23 @@ type IdentityData struct {
 	// DisplayName is the username of the player, which may be changed by the user. It should for that reason
 	// not be used as a key to store information.
 	DisplayName string `json:"displayName"`
-	// TitleID is a numerical ID present only if the user is logged into XBL. It holds the title ID (XBL
-	// related) of the version that the player is on. Some of these IDs may be found below.
+	// TitleID is a numerical ID present only if the user is logged into XBOX Live using the legacy chain. It holds
+	// the title ID (XBL related) of the version that the player is on. Some of these IDs may be found below:
 	// Win10: 896928775
 	// Mobile: 1739947436
 	// Nintendo: 2047319603
 	// Note that these IDs are protected using XBOX Live, making the spoofing of this data very difficult.
 	TitleID string `json:"titleId,omitempty"`
+	// PlayFabTitleID is the title ID specific to PlayFab, as found in the OIDC/multiplayer-token claim `tid`.
+	// It is typically "20CA2" for retail.
+	PlayFabTitleID string `json:"-"`
+	// PlayFabID is the unique ID of the player specific to PlayFab, which will remain consistent
+	// as long as they are logged in to the PlayFab account via Xbox Live and many other identity
+	// providers supported by PlayFab. It is specifically the ID for master player account, which
+	// is shared across all titles published by Mojang. It is only present for newer login requests
+	// involving multiplayer tokens issued by the Minecraft service.
+	// Sometimes, PlayFabID is referred to Minecraft ID (MCID) or PFID in the game.
+	PlayFabID string `json:"-"`
 }
 
 // checkOfflineUsername is used to check if a username is valid for normal Minecraft client,
@@ -116,7 +130,9 @@ type ClientData struct {
 	DeviceOS protocol.DeviceOS
 	// DeviceID is usually a UUID specific to the device. A different user will have the same UUID for this.
 	// DeviceID is not guaranteed to always be a UUID. It is a base64 encoded string under some circumstances.
-	DeviceID string `json:"DeviceId"`
+	// This field is not automatically verified by default, because the format is different for each OS and
+	// not all have been verified.
+	DeviceID DeviceID `json:"DeviceId"`
 	// GameVersion is the game version of the player that attempted to join, for example '1.11.0'.
 	GameVersion string
 	// GUIScale is the GUI scale of the player. It is by default 0, and is otherwise -1 or -2 for a smaller
@@ -390,4 +406,77 @@ func base64DecLength(base64Data string, validLengths ...int) error {
 		}
 	}
 	return fmt.Errorf("invalid size: got %v, expected one of %v", actualLength, validLengths)
+}
+
+type DeviceID string
+
+// DeviceIDFormat describes the format of the DeviceID,
+// the documentation for each format is as follows:
+//
+//	DeviceOS to DeviceIDFormat
+//		DeviceAndroid: DeviceIDFormatLowerHexString, // "a4f365bb1e04459bbe4cb3cbf9d546e0",
+//		DeviceIOS:  DeviceIDFormatUpperHexString, // "ADA3DFA4622F4E2FB2C14A496D52DB96",
+//		DeviceWin32: DeviceIDFormatLowerHexString, // "362b850f82493ec2719ea267dd25167f",
+//		DeviceOrbis: DeviceIDFormatUUID, // "05601fd2-9c71-30b1-b174-5fa11b9de09f",
+//		DeviceXBOX: DeviceIDFormatBase64, // "VlhnpI7TuWyfHiUx3WYwFvQQHbDkv505h6VVo40Cngw=",
+type DeviceIDFormat uint8
+
+const (
+	DeviceIDFormatUpperHexString DeviceIDFormat = iota
+	DeviceIDFormatLowerHexString
+	DeviceIDFormatBase64
+	DeviceIDFormatUUID
+	DeviceIDFormatInvalid
+)
+
+// Used to check the provided DeviceID contains only lower-case characters and digits.
+var lowerMatch = regexp.MustCompile(`^[a-z0-9]+$`)
+
+// Format determines the format of the DeviceID based on documented types.
+// If no format is determined, DeviceIDFormatInvalid is returned.
+func (dID DeviceID) Format() DeviceIDFormat {
+	deviceID := string(dID)
+
+	// This must be checked before UUID as these are valid UUIDs as well.
+	data, err := hex.DecodeString(deviceID)
+	if err == nil {
+		if len(data) != 16 {
+			return DeviceIDFormatInvalid
+		}
+
+		if lowerMatch.MatchString(deviceID) {
+			return DeviceIDFormatLowerHexString
+		}
+		return DeviceIDFormatUpperHexString
+	}
+
+	_, err = uuid.Parse(deviceID)
+	if err == nil {
+		return DeviceIDFormatUUID
+	}
+
+	data, err = base64.StdEncoding.DecodeString(deviceID)
+	if err == nil && len(data) == 32 {
+		return DeviceIDFormatBase64
+	}
+
+	return DeviceIDFormatInvalid
+}
+
+// ExpectedDeviceIDFormat returns the expected format of the DeviceID based on the provided DeviceOS.
+// For undocumented devices, DeviceIDFormatInvalid is returned. 
+func (data ClientData) ExpectedDeviceIDFormat() DeviceIDFormat {
+	switch data.DeviceOS {
+	case protocol.DeviceAndroid:
+		return DeviceIDFormatLowerHexString // "a4f365bb1e04459bbe4cb3cbf9d546e0",
+	case protocol.DeviceIOS:
+		return DeviceIDFormatUpperHexString // "ADA3DFA4622F4E2FB2C14A496D52DB96",
+	case protocol.DeviceWin32:
+		return DeviceIDFormatLowerHexString // "362b850f82493ec2719ea267dd25167f",
+	case protocol.DeviceOrbis:
+		return DeviceIDFormatUUID // "05601fd2-9c71-30b1-b174-5fa11b9de09f",
+	case protocol.DeviceXBOX:
+		return DeviceIDFormatBase64 // "VlhnpI7TuWyfHiUx3WYwFvQQHbDkv505h6VVo40Cngw=",
+	}
+	return DeviceIDFormatInvalid
 }

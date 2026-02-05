@@ -20,9 +20,9 @@ type Decoder struct {
 	// NewDecoder implements the packetReader interface.
 	pr packetReader
 
-	compression Compression
 	encryption  Encryption
-
+	decompress         bool
+	compression        Compression
 	maxDecompressedLen int
 
 	checkPacketLimit bool
@@ -55,6 +55,7 @@ func (decoder *Decoder) EnableEncryption(encryption Encryption) {
 
 // EnableCompression enables compression for the Decoder.
 func (decoder *Decoder) EnableCompression(compression Compression, maxDecompressedLen int) {
+	decoder.decompress = true
 	decoder.compression = compression
 	decoder.maxDecompressedLen = maxDecompressedLen
 }
@@ -107,6 +108,21 @@ func (decoder *Decoder) Decode() (packets [][]byte, err error) {
 		data, err = decoder.compression.Decompress(data, decoder.maxDecompressedLen)
 		if err != nil {
 			return nil, &CompressionError{Op: "decompress batch", Err: err}
+	if decoder.decompress {
+		if data[0] == 0xff {
+			data = data[1:]
+		} else {
+			compression, ok := CompressionByID(uint16(data[0]))
+			if !ok {
+				return nil, fmt.Errorf("decompress batch: unknown compression algorithm %v", data[0])
+			}
+			if compression != decoder.compression {
+				return nil, fmt.Errorf("decompress batch: unexpected compression algorithm: got %v, expected %v", compression, decoder.compression)
+			}
+			data, err = compression.Decompress(data[1:], decoder.maxDecompressedLen)
+			if err != nil {
+				return nil, fmt.Errorf("decompress batch: %w", err)
+			}
 		}
 	}
 
