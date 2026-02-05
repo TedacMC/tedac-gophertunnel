@@ -12,8 +12,8 @@ import (
 type Encoder struct {
 	w io.Writer
 
-	encryption  Encryption
-	compression Compression
+	encryption           Encryption
+	compression          Compression
 	compressionThreshold int
 }
 
@@ -35,7 +35,7 @@ func (encoder *Encoder) EnableCompression(compression Compression, threshold int
 	encoder.compressionThreshold = threshold
 }
 
-// Encode encodes the packets passed. It writes all of them as a single packet which is  compressed and
+// Encode encodes the packets passed. It writes all of them as a single packet which is compressed and
 // optionally encrypted.
 func (encoder *Encoder) Encode(packets [][]byte) error {
 	buf := internal.BufferPool.Get().(*bytes.Buffer)
@@ -58,18 +58,11 @@ func (encoder *Encoder) Encode(packets [][]byte) error {
 
 	data := buf.Bytes()
 	if encoder.compression != nil {
-	prepend := []byte{header}
-
-	if compression := encoder.compression; compression != nil {
-		if len(data) < encoder.compressionThreshold {
-			compression = NopCompression
-		}
 		var err error
-		data, err = compression.Compress(data)
+		data, err = encoder.compression.Compress(data)
 		if err != nil {
 			return &CompressionError{Op: "compress batch", Err: err}
 		}
-		prepend = append(prepend, byte(compression.EncodeCompression()))
 	}
 
 	data = append([]byte{header}, data...)
